@@ -97,10 +97,10 @@ def convert(ifile,ofile) :
 				else : 
 					if p_info['type']=='char1024' :
 
-						tmp_str = '\n' + '#define' +' '+ p_id +' = \"'+ p_info['value'] +'\"'
+						tmp_str = '\n' + '#define' +' '+ p_id +'='+ p_info['value']
 					else :
 						tmp_str = '\n' + 'global ' + p_info['type'] +' '+ p_id +' \"'+ p_info['value'] +'\";'
-					set_str = '\n' + '#set ' + p_id + '=\"' + p_info['value'] + '\"'
+					set_str = '\n' + '#set ' + p_id + '=' + p_info['value']
 				else_str = '\n' + '#else'
 				endif_str = '\n' + '#endif //' + p_id
 				fw.write(ifndef_str)
@@ -150,7 +150,7 @@ def convert(ifile,ofile) :
 				for v_id, v_info in data['objects'][obj_id_sorted].items() : 
 					if v_id not in objects_ignore and v_info:
 						# print(v_id)
-						if v_id in classdata and type(classdata[v_id]) is 'dict' and classdata[v_id]['type'] == 'object':
+						if v_id in classdata and type(classdata[v_id]) is dict and classdata[v_id]['type'] == 'object':
 							v_str = v_info.replace(':','_')
 						else:
 							v_str = v_info.replace('"', '\\\"')

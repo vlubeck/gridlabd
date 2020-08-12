@@ -1135,6 +1135,52 @@ int GldLoader::literal(PARSER, const char *text)
 	return 0;
 }
 
+int GldLoader::quoted_string(PARSER, char *result, int size)
+{
+	int len = 0;
+	while ( isspace(*_p) ) _p++;
+	if ( *_p++ != '"' )
+	{
+		return 0;
+	}
+	else
+	{
+		len++;
+		while ( _p[0] != '"' )
+		{
+			if ( len < size-1 )
+			{
+				if ( _p[0] == '\\' && _p[1] != '\0' )
+				{
+					switch ( *++_p )
+					{
+					case 'n':
+						*result++ = '\n';
+						break;
+					case 't':
+						*result++ = '\t';
+						break;
+					default:
+						*result++ = *_p++;
+						break;
+					}
+				}
+				else
+				{
+					*result++ = *_p++;
+					len++;
+				}
+			}
+			else
+			{
+				return 0;
+			}
+		}
+		*result++ = '\0';
+		len++;
+		return len;
+	}
+}
 int GldLoader::dashed_name(PARSER, char *result, int size)
 {	/* basic name */
 	START;
@@ -3203,6 +3249,53 @@ int GldLoader::class_external_function(PARSER, CLASS *oclass, CLASS **eclass,cha
 	DONE;
 }
 
+int GldLoader::class_event_handler(PARSER, CLASS *oclass)
+{
+	char value[1024];
+	START;
+	if WHITE ACCEPT;
+	if ( LITERAL("on_init") && (WHITE,TERM(quoted_string(HERE,value,sizeof(value)))) && (WHITE,LITERAL(";")) )
+	{
+		oclass->events.init = strdup(value);
+		ACCEPT;
+	}
+	else if ( LITERAL("on_precommit") && (WHITE,TERM(quoted_string(HERE,value,sizeof(value)))) && (WHITE,LITERAL(";")) )
+	{
+		oclass->events.precommit = strdup(value);
+		ACCEPT;
+	}
+	else if ( LITERAL("on_presync") && (WHITE,TERM(quoted_string(HERE,value,sizeof(value)))) && (WHITE,LITERAL(";")) )
+	{
+		oclass->events.presync = strdup(value);
+		ACCEPT;
+	}
+	else if ( LITERAL("on_sync") && (WHITE,TERM(quoted_string(HERE,value,sizeof(value)))) && (WHITE,LITERAL(";")) )
+	{
+		oclass->events.sync = strdup(value);
+		ACCEPT;
+	}
+	else if ( LITERAL("on_postsync") && (WHITE,TERM(quoted_string(HERE,value,sizeof(value)))) && (WHITE,LITERAL(";")) )
+	{
+		oclass->events.postsync = strdup(value);
+		ACCEPT;
+	}
+	else if ( LITERAL("on_commit") && (WHITE,TERM(quoted_string(HERE,value,sizeof(value)))) && (WHITE,LITERAL(";")) )
+	{
+		oclass->events.commit = strdup(value);
+		ACCEPT;
+	}
+	else if ( LITERAL("on_finalize") && (WHITE,TERM(quoted_string(HERE,value,sizeof(value)))) && (WHITE,LITERAL(";")) )
+	{
+		oclass->events.finalize = strdup(value);
+		ACCEPT;
+	}
+	else
+	{
+		REJECT;
+	}
+	DONE;
+}
+
 int GldLoader::class_properties(PARSER, CLASS *oclass, int64 *functions, char *initcode, int initsize)
 {
 	static char code[65536];
@@ -3231,6 +3324,10 @@ int GldLoader::class_properties(PARSER, CLASS *oclass, int64 *functions, char *i
 		ACCEPT;
 	}
 	else if TERM(class_explicit_definition(HERE, oclass))
+	{
+		ACCEPT;
+	}
+	else if TERM(class_event_handler(HERE, oclass))
 	{
 		ACCEPT;
 	}
@@ -7458,6 +7555,31 @@ int GldLoader::process_macro(char *line, int size, char *_filename, int linenum)
 			return TRUE;
 		}
 	}
+	else if (strncmp(line,"#exec",5)==0)
+	{
+		char *term = strchr(line+5,' ');
+		char value[1024];
+		if (term==NULL)
+		{
+			syntax_error(filename,linenum,"#system missing system call");
+			strcpy(line,"\n");
+			return FALSE;
+		}
+		strcpy(value, strip_right_white(term+1));
+		IN_MYCONTEXT output_debug("%s(%d): executing system(char *cmd='%s')", filename, linenum, value);
+		global_return_code = system(value);
+		if( global_return_code != 0 )
+		{
+			syntax_error(filename,linenum,"error executing system(char *cmd='%s') -> non-zero exit code (status=%d)", value, global_return_code);
+			strcpy(line,"\n");
+			return FALSE;
+		}
+		else
+		{
+			strcpy(line,"\n");
+			return TRUE;
+		}
+	}
 	else if (strncmp(line,"#gridlabd",9)==0)
 	{
 		char *term = strchr(line+9,' ');
@@ -7612,7 +7734,7 @@ int GldLoader::process_macro(char *line, int size, char *_filename, int linenum)
 				}
 				else
 				{
-					output_error_raw("%s(%d): version test '%s' is not valid",filename,linenum,next);
+					syntax_error(filename,linenum,"version test '%s' is not valid",next);
 					return FALSE;
 				}
 				continue;
@@ -7638,7 +7760,7 @@ int GldLoader::process_macro(char *line, int size, char *_filename, int linenum)
 		}
 		if ( ! ok )
 		{
-			output_error_raw("%s(%d): version '%d.%d.%d-%d-%s' does not satisfy the version requirement",filename,linenum,
+			syntax_error(filename,linenum,"version '%d.%d.%d-%d-%s' does not satisfy the version requirement",
 				global_version_major, global_version_minor, global_version_patch, global_version_build, global_version_branch);
 			strcpy(line,"\n");
 			return FALSE;
@@ -7653,12 +7775,12 @@ int GldLoader::process_macro(char *line, int size, char *_filename, int linenum)
 		char cmd[1024];
 		if ( sscanf(line+8,"%d %1023[^\n]",&xc,cmd) < 2 )
 		{
-			output_error_raw("%s(%d): " "#on_exit syntax error", filename,linenum);
+			syntax_error(filename,linenum,"#on_exit syntax error");
 			return FALSE;
 		}
 		else if ( ! my_instance->add_on_exit(xc,cmd) )
 		{
-			output_error_raw("%s(%d): " "#on_exit %d command '%s' failed", filename,linenum,xc,cmd);
+			syntax_error(filename,linenum,"#on_exit %d command '%s' failed", xc,cmd);
 			return FALSE;
 		}
 		else
@@ -7672,7 +7794,7 @@ int GldLoader::process_macro(char *line, int size, char *_filename, int linenum)
 		char name[256];
 		if ( sscanf(line+7,"%s",name) == 0 )
 		{
-			output_error_raw("%s(%d): " "#begin macro missing language term", filename, linenum);
+			syntax_error(filename,linenum,"#begin macro missing language term");
 			return FALSE;
 		}
 		strcpy(line,"\n");
@@ -7921,7 +8043,7 @@ STATUS GldLoader::load_python(const char *filename)
 	{
 		python_embed_init(0,NULL);
 	}
-	return python_embed_import(filename,".") == NULL ? FAILED : SUCCESS;
+	return python_embed_import(filename,global_pythonpath) == NULL ? FAILED : SUCCESS;
 //	return my_instance->subcommand("/usr/local/bin/python3 %s",filename) == 0 ? SUCCESS : FAILED;
 }
 
